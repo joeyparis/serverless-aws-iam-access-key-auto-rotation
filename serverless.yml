@@ -1,0 +1,165 @@
+org: ${env:SLS_ORG}
+app: aws-iam-access-key-auto-rotation
+service: aws-iam-access-key-auto-rotation
+useDotenv: true
+
+frameworkVersion: '2 || 3'
+
+provider:
+  name: aws
+  runtime: python3.8
+  environment:
+    DRY_RUN_FLAG: ${env:DRY_RUN_FLAG, true}
+    
+    PRIMARY_ACCOUNT_ID: ${env:PRIMARY_ACCOUNT_ID}
+    AWS_ORG_ID: ${env:AWS_ORG_ID}
+    
+    SENDER_EMAIL: ${env:SENDER_EMAIL}
+    RECIPIENT_EMAIL: ${env:RECIPIENT_EMAIL}
+    SES_DOMAIN: ${env:SES_DOMAIN}
+    
+    ROTATION_PERIOD: ${env:ROTATION_PERIOD, 90}
+    INACTIVE_PERIOD: ${env:INACTIVE_PERIOD, 100}
+    INACTIVE_BUFFER: ${env:INACTIVE_BUFFER, 10}
+    RECOVERY_GRACE_PERIOD: ${env:RECOVERY_GRACE_PERIOD, 10}
+    
+    IAM_EXEMPTION_GROUP: ${self:custom.IAM_EXEMPTION_GROUP}
+    IAM_ASSUMED_ROLE_NAME: ${self:custom.IAM_ASSUMED_ROLE_NAME}
+    EXECUTION_ROLE_NAME: ${self:custom.EXECUTION_ROLE_NAME}
+    ROLE_SESSION_NAME: ${self:app}-${sls:stage}-AccessKeyRotate
+
+    EMAIL_TEMPLATE_ENFORCE: ${env:EMAIL_TEMPLATE_ENFORCE, "iam-auto-key-rotation-enforcement.html"}
+    EMAIL_TEMPLATE_AUDIT: ${env:EMAIL_TEMPLATE_AUDIT, "iam-auto-key-rotation-enforcement.html"}
+
+    NOTIFIER_FUNCTION_ARN: ${self:app}-${sls:stage}-Notifier
+    ROTATION_FUNCTION_ARN: ${self:app}-${sls:stage}-AccessKeyRotate
+    ACCOUNT_INVENTORY_ROLE_ARN: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${self:app}-${sls:stage}-AccountInventory-${AWS::Region}"
+
+custom:
+  IAM_EXEMPTION_GROUP: ${env:IAM_EXEMPTION_GROUP, "ASAIAMExemptionsGroup"}
+  IAM_ASSUMED_ROLE_NAME: ${env:IAM_ASSUMED_ROLE_NAME, "${self:app}-lambda-assumed-role"}
+  EXECUTION_ROLE_NAME: ${env:EXECUTION_ROLE_NAME, "${self:app}-lambda-execution-role"}
+  ROLE_SESSION_NAME: ${self:app}-${sls:stage}-AccessKeyRotate
+
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-iam-roles-per-function
+
+functions:
+  Notifier:
+    handler: "src/notifier/main.lambda_handler"
+    description: Function that received SNS events from config rules and emails end users who own the account id of the resource violation.
+    timeout: 300
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - ses:SendEmail
+        Resource:
+          - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${env:SES_DOMAIN}' # Allow role to send email on behalf of admin email identity
+  AccessKeyRotate:
+    handler: "src/access_key_auto_rotation/main.lambda_handler"
+    description: ASA Function to rotate IAM Access Keys on specified schedule
+    timeout: 400
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - lambda:InvokeFunction
+        Resource:
+          - !GetAtt NotifierLambdaFunction.Arn
+      - Effect: "Allow"
+        Action:
+          - sts:AssumeRole
+        Resource:
+          - !GetAtt ASAIAMAssumedRole.Arn
+  AccountInventory:
+    handler: "src/account_inventory.lambda_handler"
+    description: Function that calls the DescribeAccount & ListAccounts on AWS Organizations to collect all AWS Account IDs and corresponding Emails.
+    timeout: 300
+    iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - lambda:InvokeFunction
+        Resource:
+          - !GetAtt AccessKeyRotateLambdaFunction.Arn
+      - Effect: "Allow"
+        Action:
+          - iam:SimulatePrincipalPolicy
+          - iam:GetUser
+        Resource:
+          - "*"
+    events:
+      - schedule:
+          rate: rate(24 hours)
+
+resources:
+  Resources:
+    ##################################################################
+    # ASA IAM Role that will be assumed by the ASA IAM Key Rotation 
+    #  Function.
+    ##################################################################
+    ASAIAMAssumedRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: ${self:custom.IAM_ASSUMED_ROLE_NAME}
+        Description: !Sub "IAM Assume Role used by ${env:PRIMARY_ACCOUNT_ID}'s ASA-IAM-Access-Key-Rotation-Function Lambda. This role is used to inspect and rotate IAM Keys that are violating the company's key rotation policy."
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub ${env:PRIMARY_ACCOUNT_ID}            
+            Action: sts:AssumeRole
+        Policies:
+            - PolicyName: AllowRotationFunctionPermissions
+              PolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                  - Effect: Allow
+                    Action:
+                      - iam:List*
+                      - iam:CreatePolicy
+                      - iam:CreateAccessKey
+                      - iam:DeleteAccessKey
+                      - iam:UpdateAccessKey
+                      - iam:PutUserPolicy
+                      - iam:GetUserPolicy
+                      - iam:GetAccessKeyLastUsed
+                      - iam:GetUser
+                    Resource: "*"
+                  - Effect: Allow
+                    Action:
+                      - iam:AttachUserPolicy
+                    Resource:
+                      - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:user/*"
+                  - Effect: Allow
+                    Action:
+                      - secretsmanager:PutResourcePolicy
+                      - secretsmanager:PutSecretValue
+                      - secretsmanager:DescribeSecret
+                      - secretsmanager:CreateSecret
+                      - secretsmanager:GetResourcePolicy
+                    Resource:
+                      - !Sub "arn:${AWS::Partition}:secretsmanager:*:${AWS::AccountId}:secret:*"
+                  - Effect: Allow
+                    Action:
+                      - iam:GetGroup
+                    Resource:
+                      - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:group/${self:custom.IAM_EXEMPTION_GROUP}"
+                  - Effect: Allow
+                    Action:
+                      - sts:AssumeRole
+                    Resource: !Sub arn:${AWS::Partition}:iam::${env:PRIMARY_ACCOUNT_ID}:role/${self:custom.EXECUTION_ROLE_NAME}
+                    Condition:
+                      StringEquals:
+                        aws:PrincipalOrgID: ${env:AWS_ORG_ID}
+        Path: /
+
+    ##################################################################
+    # ASA IAM Group that will be used to manage account exemptions
+    ##################################################################
+    ASAIAMExemptionsGroup:
+      Type: AWS::IAM::Group
+      Properties:
+        GroupName: ${self:custom.IAM_EXEMPTION_GROUP}
