@@ -51,8 +51,8 @@ class Notifier:
         return result
 
     def __get_template(self, template_name):
-        log.info(f'Getting template {template_name} from S3')
-        s3 = boto3.client('s3')
+        # log.info(f'Getting template {template_name} from S3')
+        # s3 = boto3.client('s3')
 
         try:
             # obj = s3.get_object(
@@ -65,7 +65,7 @@ class Notifier:
             # log.info(f'Successfully retrieved content for {template_name}')
             # return template
 
-            f = open(self.lambda_task_root + '/src/notifier/iam-auto-key-rotation-enforcement.html','r')
+            f = open(f'{self.lambda_task_root}/templates/{template_name}','r')
             data = f.read()
             f.close()
             # template = data.decode('utf-8')

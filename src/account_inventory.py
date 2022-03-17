@@ -53,7 +53,7 @@ def lambda_handler(event, context):
     else:
         account_list = [{
             'Id': os.environ['PRIMARY_ACCOUNT_ID'],
-            'Name': 'ASA IAM Key Rotation',
+            'Name': os.environ['RECIPIENT_EMAIL'],
             'Email': os.environ['RECIPIENT_EMAIL'],
             'Status': 'ACTIVE'
         }]

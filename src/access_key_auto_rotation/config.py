@@ -42,17 +42,16 @@ class Config:
     roleSessionName = os.getenv('ROLE_SESSION_NAME')
 
     # The number of days after which a key should be rotated
-    # Default = 90 days
-    rotationPeriod = int(os.getenv('ROTATION_PERIOD', 90))
+    rotationPeriod = int(os.getenv('ROTATION_PERIOD'))
 
     # Installation being time between rotation and deactivation
-    installation_grace_period = int(os.getenv('INSTALLATION_GRACE_PERIOD', 7))
+    installation_grace_period = int(os.getenv('INSTALLATION_GRACE_PERIOD'))
 
     # Recovery between deactivation and deletion
-    recovery_grace_period = int(os.getenv('RECOVERY_GRACE_PERIOD', 7))
+    recovery_grace_period = int(os.getenv('RECOVERY_GRACE_PERIOD'))
 
     # how many days ahead of time to warn users of pending actions
-    pending_action_warn_period = int(os.getenv('PENDING_ACTION_WARN_PERIOD', 7))
+    pending_action_warn_period = int(os.getenv('PENDING_ACTION_WARN_PERIOD'))
 
     # Functionality flag that Enables/Disables key rotation functionality. 
     # 'True' only sends notifications to end users (Audit Mode).
