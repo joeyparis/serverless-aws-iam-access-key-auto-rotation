@@ -41,7 +41,6 @@ def lambda_handler(event, context):
 
     # check for dryrun flag
     dryrun = str(event.get('dryrun')).lower() == 'true' or config.dryrun
-    dryrun = 1 == 1
 
     # Parse event to get Account ID and Email
     aws_account_id = event['account']
